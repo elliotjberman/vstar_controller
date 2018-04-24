@@ -14,6 +14,17 @@
 
 Adafruit_Trellis trellis;
 
+
+#define ANALOG_INPUT
+
+#ifdef ANALOG_INPUT
+uint8_t       rateMod;
+uint8_t       pitch;
+uint8_t       fxc;
+uint8_t       rate;
+#endif
+
+int velocity = 100;
 uint8_t       heart        = 0;  // Heartbeat LED counter
 unsigned long prevReadTime = 0L; // Keypad polling timer
 
@@ -53,12 +64,16 @@ void noteOff(byte channel, byte pitch, byte velocity) {
 // Fourth parameter is the control value (0-127).
 // Currently not in use
 void controlChange(byte channel, byte control, byte value) {
-  midiEventPacket_t event = {0x0B, (byte) (0xB0 | channel), control, value};
+  midiEventPacket_t event = {0x0B, (byte)(0xB0 | channel)-1, control, value};
+  MidiUSB.sendMIDI(event);
+}
+void pitchBend(byte channel, byte control, byte value) {
+  midiEventPacket_t event = {0x0E, (byte)(0xE0 | channel)-1, control, value};
   MidiUSB.sendMIDI(event);
 }
 
 void startupAnimation(Adafruit_Trellis t) {
-  int speed = 45;
+  int speed = 30;
   for (int i=0; i<16; ++i) {
     t.setLED(i);
     t.writeDisplay();
@@ -80,6 +95,14 @@ void setup() {
   trellis.clear();
   trellis.writeDisplay();
 
+  #ifdef ANALOG_INPUT
+  rateMod = map(analogRead(0), 0, 1023, 0, 127);
+  pitch = map(analogRead(1), 0, 1023, 0, 127);
+
+  controlChange(CHANNEL,  0, rateMod);
+  pitchBend(CHANNEL, 0, pitch);
+  #endif
+
 }
 
 void loop() {
@@ -89,13 +112,29 @@ void loop() {
 
       for(uint8_t i=0; i<16; i++) { // For each button...
         if(trellis.justPressed(i)) {
-          noteOn(CHANNEL, note[i], 127);
+          noteOn(CHANNEL, note[i], velocity);
 
         } else if(trellis.justReleased(i)) {
           noteOn(CHANNEL, note[i], 0);
         }
       }
     }
+
+    #ifdef ANALOG_INPUT
+
+    uint8_t newRate = map(analogRead(0), 0, 1023, 0, 127);
+    if(rateMod != newRate) {
+      rateMod = newRate;
+      controlChange(CHANNEL, 0, rateMod);
+    }
+
+    uint8_t newPitchBend = map(analogRead(1), 0, 1023, 0, 127);
+    if(pitch != newPitchBend) {
+      pitch = newPitchBend;
+      pitchBend(CHANNEL, 0, pitch);
+    }
+
+    #endif
 
     // Read midi in
     midiEventPacket_t rx;
