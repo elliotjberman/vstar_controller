@@ -9,19 +9,24 @@
 #include <Adafruit_Trellis.h>
 #include <MIDIUSB.h>
 #include <midi_operations.h>
+#include <trellis_animations.h>
+#include <find_index.h>
 
 #define LED      LED_BUILTIN // Pin for heartbeat LED (shows code is working)
 #define CHANNEL  1           // MIDI channel number
-#define ANALOG_IN
 
 Adafruit_Trellis trellis;
 
 uint8_t          rateMod;
 uint8_t          pitch;
-uint8_t          click;
+bool             clicked;
 
 uint8_t       heart        = 0;  // Heartbeat LED counter
 unsigned long prevReadTime = 0L; // Keypad polling timer
+
+bool notesOn[16];
+const int FLASHING_RATE = 4;
+int flashTimer = FLASHING_RATE;
 
 uint8_t velocity = 100;
 uint8_t note[] = {
@@ -30,26 +35,6 @@ uint8_t note[] = {
   47, 46, 45, 44,
   51, 50, 49, 48,
 };
-
-int findIndex(int x) {
-  int row = (x / 4) - 9;
-  int column = 3 - x % 4;
-  return row * 4 + column;
-}
-
-void startupAnimation(Adafruit_Trellis t) {
-  int speed = 30;
-  for (int i=36; i<52; ++i) {
-    t.setLED(findIndex(i));
-    t.writeDisplay();
-    delay(speed);
-  }
-  for (int i=36; i<52; ++i) {
-    t.clrLED(findIndex(i));
-    t.writeDisplay();
-    delay(speed);
-  }
-}
 
 void setup() {
   pinMode(LED, OUTPUT);
@@ -60,17 +45,19 @@ void setup() {
   trellis.clear();
   trellis.writeDisplay();
 
-  #ifdef ANALOG_IN
   rateMod = map(analogRead(0), 0, 1023, 0, 127);
   pitch = map(analogRead(1), 0, 1023, 0, 127);
-  click = map(analogRead(2), 0, 1023, 0, 127);
+  clicked = map(analogRead(2), 0, 1023, 0, 127);
 
 
   controlChange(CHANNEL,  0, rateMod);
   pitchBend(CHANNEL, 0, pitch);
-  controlChange(CHANNEL,  1, click);
-  #endif
+  controlChange(CHANNEL,  1, clicked);
 
+}
+
+uint8_t getReading(int pinNumber) {
+  return map(analogRead(pinNumber), 0, 1023, 0, 127);
 }
 
 void loop() {
@@ -88,26 +75,24 @@ void loop() {
       }
     }
 
-    #ifdef ANALOG_IN
-    uint8_t newRate = map(analogRead(0), 0, 1023, 0, 127);
+    uint8_t newRate = getReading(0);
     if(rateMod != newRate) {
       rateMod = newRate;
       controlChange(CHANNEL, 0, rateMod);
     }
 
-    uint8_t newPitchBend = map(analogRead(1), 0, 1023, 0, 127);
+    uint8_t newPitchBend = getReading(1);
     if(pitch != newPitchBend) {
       pitch = newPitchBend;
       pitchBend(CHANNEL, 0, pitch);
     }
 
-    // uint8_t newClick = map(analogRead(2), 0, 1023, 0, 127);
-    // if(click != newClick) {
-    //   click = newClick;
-    //   controlChange(CHANNEL, 1, click);
-    // }
-
-    #endif
+    // PS4 Joytick Button animations
+    bool newClick = getReading(2) < 1;
+    if(clicked != newClick) {
+      clicked = newClick;
+      noteOn(CHANNEL, 1, velocity);
+    }
 
     // Read midi in
     midiEventPacket_t rx;
@@ -115,13 +100,34 @@ void loop() {
       rx = MidiUSB.read();
       if (rx.header != 0) {
         if (rx.header == 9) {
-          trellis.setLED(findIndex(rx.byte2));
+          notesOn[findIndex(rx.byte2)] = true;
+
+          if (rx.byte2 == 1) {
+            clicked = true;
+          }
         }
         else {
-          trellis.clrLED(findIndex(rx.byte2));
+          notesOn[findIndex(rx.byte2)] = false;
+
+          if (rx.byte2 == 1) {
+            clicked = false;
+          }
         }
       }
     } while (rx.header != 0);
+
+    for (int i=0; i<16; ++i) {
+      if (notesOn[i])
+        trellis.setLED(i);
+      else
+        trellis.clrLED(i);
+    }
+
+    if (clicked)
+      flashAnimation(trellis, flashTimer, FLASHING_RATE);
+    else
+      clearLEDS(trellis, notesOn);
+
     trellis.writeDisplay();
 
     prevReadTime = t;
