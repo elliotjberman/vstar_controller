@@ -1,7 +1,7 @@
 #include <trellis_animations.h>
 
 void startupAnimation(Adafruit_Trellis& t) {
-  int speed = 30;
+  int speed = 20 ;
   for (int i=36; i<52; ++i) {
     t.setLED(findIndex(i));
     t.writeDisplay();
