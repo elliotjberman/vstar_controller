@@ -98,22 +98,24 @@ void loop() {
     midiEventPacket_t rx;
     do {
       rx = MidiUSB.read();
-      if (rx.header != 0) {
-        if (rx.header == 9) {
-          notesOn[findIndex(rx.byte2)] = true;
 
-          if (rx.byte2 == 1) {
-            clicked = true;
-          }
-        }
-        else {
-          notesOn[findIndex(rx.byte2)] = false;
+      // Note on
+      if (rx.header == 9) {
+        notesOn[findIndex(rx.byte2)] = true;
 
-          if (rx.byte2 == 1) {
-            clicked = false;
-          }
+        if (rx.byte2 == 1) {
+          clicked = true;
         }
       }
+      // Note off
+      else if (rx.header == 8) {
+        notesOn[findIndex(rx.byte2)] = false;
+
+        if (rx.byte2 == 1) {
+          clicked = false;
+        }
+      }
+
     } while (rx.header != 0);
 
     for (int i=0; i<16; ++i) {
