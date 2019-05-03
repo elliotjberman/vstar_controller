@@ -5,17 +5,19 @@
  */
 
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_Trellis.h>
+#include <Adafruit_NeoTrellis.h>
+
 #include <MIDIUSB.h>
 #include <midi_operations.h>
-#include <trellis_animations.h>
 #include <find_index.h>
+
+#include <wheel.h>
+#include <trellis_animations.h>
 
 #define LED      LED_BUILTIN // Pin for heartbeat LED (shows code is working)
 #define CHANNEL  1           // MIDI channel number
 
-Adafruit_Trellis trellis;
+Adafruit_NeoTrellis trellis;
 
 uint8_t          rateMod;
 uint8_t          pitch;
@@ -25,25 +27,48 @@ uint8_t       heart        = 0;  // Heartbeat LED counter
 unsigned long prevReadTime = 0L; // Keypad polling timer
 
 bool notesOn[16];
-const int FLASHING_RATE = 4;
-int flashTimer = FLASHING_RATE;
+uint32_t colours[16];
 
 uint8_t velocity = 100;
 uint8_t note[] = {
-  39, 38, 37, 36,
-  43, 42, 41, 40,
-  47, 46, 45, 44,
-  51, 50, 49, 48,
+  48, 49, 50, 51,
+  44, 45, 46, 47,
+  40, 41, 42, 43,
+  36, 37, 38, 39,
 };
+
+//define a callback for key presses
+TrellisCallback blink(keyEvent evt){
+  // Check is the pad pressed?
+  if (evt.bit.EDGE == SEESAW_KEYPAD_EDGE_RISING) {
+    noteOn(CHANNEL, note[evt.bit.NUM], velocity);
+  } else if (evt.bit.EDGE == SEESAW_KEYPAD_EDGE_FALLING) {
+    noteOn(CHANNEL, note[evt.bit.NUM], 0);
+  }
+
+  return 0;
+}
+
+uint32_t dimColour(uint32_t colour, int factor) {
+  uint32_t dimmed = colour;
+  while(factor--) {
+    dimmed = (dimmed & 0xfefefe) >> 1;
+  }
+  return dimmed;
+}
 
 void setup() {
   pinMode(LED, OUTPUT);
-  trellis.begin(0x70); // Pass I2C address
+  trellis.begin(); // Pass I2C address
 
   startupAnimation(trellis);
 
-  trellis.clear();
-  trellis.writeDisplay();
+  //activate all keys and set callbacks
+  for(int i=0; i<NEO_TRELLIS_NUM_KEYS; i++){
+    trellis.activateKey(i, SEESAW_KEYPAD_EDGE_RISING);
+    trellis.activateKey(i, SEESAW_KEYPAD_EDGE_FALLING);
+    trellis.registerCallback(i, blink);
+  }
 
   rateMod = map(analogRead(0), 0, 1023, 0, 127);
   pitch = map(analogRead(1), 0, 1023, 0, 127);
@@ -61,19 +86,12 @@ uint8_t getReading(int pinNumber) {
 }
 
 void loop() {
+  clicked = map(analogRead(2), 0, 1023, 0, 127);
+  bool switchDown = clicked == 0;
+
+  trellis.read();
   unsigned long t = millis();
   if((t - prevReadTime) >= 20L) { // 20ms = min Trellis poll time
-    if(trellis.readSwitches()) {  // Button state change?
-
-      for(uint8_t i=0; i<16; i++) { // For each button...
-        if(trellis.justPressed(i)) {
-          noteOn(CHANNEL, note[i], velocity);
-
-        } else if(trellis.justReleased(i)) {
-          noteOn(CHANNEL, note[i], 0);
-        }
-      }
-    }
 
     uint8_t newRate = getReading(0);
     if(rateMod != newRate) {
@@ -87,13 +105,6 @@ void loop() {
       pitchBend(CHANNEL, 0, pitch);
     }
 
-    // PS4 Joytick Button animations
-    bool newClick = getReading(2) < 1;
-    if(clicked != newClick) {
-      clicked = newClick;
-      noteOn(CHANNEL, 1, velocity);
-    }
-
     // Read midi in
     midiEventPacket_t rx;
     do {
@@ -102,35 +113,25 @@ void loop() {
       // Note on
       if (rx.header == 9) {
         notesOn[findIndex(rx.byte2)] = true;
-
-        if (rx.byte2 == 1) {
-          clicked = true;
-        }
       }
       // Note off
       else if (rx.header == 8) {
         notesOn[findIndex(rx.byte2)] = false;
-
-        if (rx.byte2 == 1) {
-          clicked = false;
-        }
       }
 
     } while (rx.header != 0);
 
     for (int i=0; i<16; ++i) {
-      if (notesOn[i])
-        trellis.setLED(i);
-      else
-        trellis.clrLED(i);
+      if (notesOn[i]) {
+        colours[i] = Wheel(trellis, map(i, 0, trellis.pixels.numPixels(), 0, 255), switchDown);
+      }
+      else {
+        colours[i] = dimColour(colours[i], 1);
+      }
+      trellis.pixels.setPixelColor(i, colours[i]);
     }
 
-    if (clicked)
-      flashAnimation(trellis, flashTimer, FLASHING_RATE);
-    else
-      clearLEDS(trellis, notesOn);
-
-    trellis.writeDisplay();
+    trellis.pixels.show();
 
     prevReadTime = t;
     digitalWrite(LED, ++heart & 32); // Blink = alive
